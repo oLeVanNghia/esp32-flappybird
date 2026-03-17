@@ -1,0 +1,86 @@
+#pragma once
+#include <cstdint>
+
+// ── Pin definitions ───────────────────────────────────────────────────────────
+// Source: https://www.lcdwiki.com/2.8inch_ESP32-S3_Display
+
+// Display (ILI9341, SPI2/FSPI)
+// =============================================================================
+// CS=10, DC=46, SCLK=12, MOSI=11, MISO=13, BL=45, RST=-1 (shared with EN)
+// =============================================================================
+#define PIN_TFT_CS    10
+#define PIN_TFT_DC    46
+#define PIN_TFT_MOSI  11
+#define PIN_TFT_SCLK  12
+#define PIN_TFT_MISO  13
+#define PIN_TFT_BL    45
+// RST is shared with ESP32-S3 EN — no software reset (-1)
+
+// Touch (FT6336G, I2C)
+#define PIN_TOUCH_SDA   16
+#define PIN_TOUCH_SCL   15
+#define PIN_TOUCH_RST   18
+#define PIN_TOUCH_INT   17
+#define TOUCH_I2C_ADDR  0x38
+
+// Microphone (MEMS I2S) — source: https://www.lcdwiki.com/2.8inch_ESP32-S3_Display
+#define PIN_I2S_MCLK     4
+#define PIN_I2S_BCLK     5
+#define PIN_I2S_WS       7
+#define PIN_I2S_DATA     8   // IO8, not IO6
+
+// ── Display ───────────────────────────────────────────────────────────────────
+#define SCREEN_W   320
+#define SCREEN_H   240
+#define ILI9341_SPI_FREQ  27000000UL  // ILI9341 write limit ≈ 25 MHz
+
+// ── Game layout ───────────────────────────────────────────────────────────────
+#define GROUND_Y    218
+#define CEILING_Y     0
+#define BIRD_X       60
+#define BIRD_R       12
+#define BIRD_HIT_R    9
+
+#define PIPE_W        52
+#define PIPE_GAP      80
+#define PIPE_COUNT     3
+#define PIPE_SPACING 175
+
+// ── Physics ───────────────────────────────────────────────────────────────────
+#define GRAVITY          0.35f
+#define FLAP_VEL        -7.5f
+#define MAX_FALL_VEL    10.0f
+#define INITIAL_SPEED    2.0f
+#define SPEED_INC        0.4f
+#define SPEED_STEP        10
+
+// ── Microphone clap detection ─────────────────────────────────────────────────
+#define MIC_THRESHOLD   6000
+#define MIC_COOLDOWN_MS  300
+
+// ── Compile-time RGB565 colour helper ─────────────────────────────────────────
+#define C565(r,g,b) ((uint16_t)(((uint16_t)((r)&0xF8u)<<8) | \
+                                ((uint16_t)((g)&0xFCu)<<3) | \
+                                ((uint16_t)(b)>>3)))
+
+// ── TFT_ colour aliases (Adafruit_GFX defines BLACK/WHITE/etc without prefix) ─
+#define TFT_BLACK    0x0000u
+#define TFT_WHITE    0xFFFFu
+#define TFT_RED      0xF800u
+#define TFT_GREEN    0x07E0u
+#define TFT_BLUE     0x001Fu
+#define TFT_YELLOW   0xFFE0u
+#define TFT_ORANGE   0xFDA0u
+
+// ── Game colours ─────────────────────────────────────────────────────────────
+#define CLR_SKY_TOP     C565(100, 180, 240)
+#define CLR_SKY_BTM     C565(180, 225, 255)
+#define CLR_CLOUD       TFT_WHITE
+#define CLR_GND_TOP     C565(100, 200,  55)
+#define CLR_GROUND      C565( 70, 162,  38)
+#define CLR_DIRT        C565(200, 160, 100)
+#define CLR_PIPE        C565( 85, 190,  50)
+#define CLR_PIPE_CAP    C565( 55, 165,  35)
+#define CLR_PIPE_LIGHT  C565(130, 220,  80)
+#define CLR_PIPE_DARK   C565( 45, 138,  25)
+#define CLR_SCORE_SHAD  C565( 40,  40,  40)
