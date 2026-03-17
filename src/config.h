@@ -69,6 +69,20 @@
                                 ((uint16_t)((g)&0xFCu)<<3) | \
                                 ((uint16_t)(b)>>3)))
 
+// ── Touch coordinate transform ────────────────────────────────────────────────
+// FT6336G reports in portrait orientation (raw_x 0‥240, raw_y 0‥320).
+// With ILI9341 setRotation(1) the display is landscape 320×240.
+// Default mapping: swap axes.  If menu tap targets feel mirrored or shifted,
+// try inverting: e.g. (SCREEN_W-1-(ry)) or (SCREEN_H-1-(rx)).
+#define TOUCH_RAW_TO_X(rx, ry)   (ry)
+#define TOUCH_RAW_TO_Y(rx, ry)   (rx)
+
+// ── Back-to-menu button (top-left corner, shown on every game screen) ─────────
+#define BACK_BTN_X   4
+#define BACK_BTN_Y   4
+#define BACK_BTN_W  58
+#define BACK_BTN_H  24
+
 // ── TFT_ colour aliases (Adafruit_GFX defines BLACK/WHITE/etc without prefix) ─
 #define TFT_BLACK    0x0000u
 #define TFT_WHITE    0xFFFFu

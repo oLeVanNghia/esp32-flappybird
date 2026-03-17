@@ -14,10 +14,11 @@
 #include "config.h"
 #include "touch.h"
 #include "mic.h"
+#include "cal.h"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-enum GameState : uint8_t { STATE_SPLASH, STATE_PLAYING, STATE_DEAD };
+enum GameState : uint8_t { STATE_MENU, STATE_SPLASH, STATE_PLAYING, STATE_DEAD };
 
 struct Bird {
     float y   = SCREEN_H / 2.0f;
@@ -67,7 +68,7 @@ Adafruit_ILI9341     tft(&g_spi, PIN_TFT_DC, PIN_TFT_CS);
 GFXcanvas16*         canvas = nullptr;
 
 Preferences          prefs;
-GameState            state     = STATE_SPLASH;
+GameState            state     = STATE_MENU;
 uint32_t             deadSince = 0;
 Bird                 bird;
 Pipe                 pipes[PIPE_COUNT];
@@ -83,6 +84,18 @@ struct Cloud { float x; int y, w; };
 static Cloud clouds[4] = {
     {  20, 28, 80 }, { 135, 18, 92 }, { 240, 48, 68 }, { 310, 30, 74 },
 };
+
+// Forward declaration (defined in game logic section below)
+static void resetGame();
+
+// ── Game registry ─────────────────────────────────────────────────────────────
+
+struct GameEntry { const char* name; const char* hint; uint16_t color; };
+
+static const GameEntry GAMES[] = {
+    { "Flabby Bird", "Tap or clap to flap!", C565(250, 220, 0) },
+};
+static constexpr int GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -217,6 +230,66 @@ static void drawScore(int s, int cx, int cy) {
     printTC(buf, cx, cy);
 }
 
+// ── Main menu ─────────────────────────────────────────────────────────────────
+
+static void drawMenu() {
+    drawBackground();
+
+    // Title
+    canvas->setFont(&FreeSansBold18pt7b);
+    canvas->setTextSize(1);
+    canvas->setTextColor(C565(50, 50, 50));
+    printMC("ARCADE", SCREEN_W / 2 + 2, 32);
+    canvas->setTextColor(C565(250, 220, 0));
+    printMC("ARCADE", SCREEN_W / 2,     30);
+
+    // Game buttons
+    for (int i = 0; i < GAME_COUNT; i++) {
+        const int bx = 20, bw = SCREEN_W - 40, bh = 54;
+        const int by = 72 + i * (bh + 10);
+
+        canvas->fillRoundRect(bx, by, bw, bh, 10, C565(20, 20, 35));
+        canvas->drawRoundRect(bx, by, bw, bh, 10, GAMES[i].color);
+
+        canvas->setFont(nullptr);
+        canvas->setTextSize(2);
+        canvas->setTextColor(GAMES[i].color);
+        printMC(GAMES[i].name, SCREEN_W / 2, by + 18);
+
+        canvas->setTextSize(1);
+        canvas->setTextColor(C565(180, 180, 180));
+        printMC(GAMES[i].hint, SCREEN_W / 2, by + 38);
+    }
+
+    // Calibrate button — bottom-right corner
+    canvas->fillRoundRect(SCREEN_W - 82, SCREEN_H - 26, 76, 20, 4, C565(30, 30, 30));
+    canvas->drawRoundRect(SCREEN_W - 82, SCREEN_H - 26, 76, 20, 4, C565(100, 100, 100));
+    canvas->setFont(nullptr);
+    canvas->setTextSize(1);
+    canvas->setTextColor(C565(140, 140, 140));
+    printMC("Calibrate Touch", SCREEN_W - 82 + 38, SCREEN_H - 26 + 10);
+
+    pushFrame();
+}
+
+static void handleMenuTouch(int tx, int ty) {
+    // Game buttons
+    for (int i = 0; i < GAME_COUNT; i++) {
+        const int bx = 20, bw = SCREEN_W - 40, bh = 54;
+        const int by = 72 + i * (bh + 10);
+        if (tx >= bx && tx < bx + bw && ty >= by && ty < by + bh) {
+            resetGame();
+            state = STATE_SPLASH;
+            return;
+        }
+    }
+    // Calibrate button
+    if (tx >= SCREEN_W - 82 && ty >= SCREEN_H - 26) {
+        cal_run(tft);
+        state = STATE_MENU;   // redraw menu after calibration
+    }
+}
+
 // ── Screens ───────────────────────────────────────────────────────────────────
 
 static void drawSplash() {
@@ -256,29 +329,50 @@ static void drawDead() {
     for (int i = 0; i < PIPE_COUNT; i++) drawPipe((int)pipes[i].x, pipes[i].gapY);
     drawBird(bird.y, bird.vy, bird.frame);
 
-    canvas->fillRoundRect(SCREEN_W/2-90, 70, 180, 110, 12, C565(0,0,0));
-    canvas->drawRoundRect(SCREEN_W/2-90, 70, 180, 110, 12, TFT_WHITE);
+    // Popup panel
+    const int px = SCREEN_W/2 - 95, pw = 190, ph = 138;
+    canvas->fillRoundRect(px, 56, pw, ph, 12, C565(10, 10, 20));
+    canvas->drawRoundRect(px, 56, pw, ph, 12, TFT_WHITE);
 
     canvas->setFont(nullptr);
     canvas->setTextSize(2);
     canvas->setTextColor(TFT_WHITE);
-    printMC("GAME OVER", SCREEN_W/2, 92);
+    printMC("GAME OVER", SCREEN_W/2, 74);
 
     canvas->setTextSize(1);
-    canvas->setTextColor(C565(200,200,200));
-    printMC("SCORE", SCREEN_W/2-40, 118);
-    printMC("BEST",  SCREEN_W/2+40, 118);
+    canvas->setTextColor(C565(200, 200, 200));
+    printMC("SCORE", SCREEN_W/2-42, 100);
+    printMC("BEST",  SCREEN_W/2+42, 100);
 
     canvas->setTextSize(3);
     canvas->setTextColor(TFT_WHITE);
-    printMC(score,   SCREEN_W/2-40, 140);
-    printMC(hiScore, SCREEN_W/2+40, 140);
+    printMC(score,   SCREEN_W/2-42, 118);
+    printMC(hiScore, SCREEN_W/2+42, 118);
 
+    // ── Action buttons (no coordinates needed) ───────────────────────────────
+    // Short tap → RETRY     Hold ≥ 0.6 s → MAIN MENU
+    const int by = 152, bh = 30;
+    const int lx = px + 6,         lw = pw/2 - 10;
+    const int rx = SCREEN_W/2 + 4, rw = pw/2 - 10;
+
+    // MENU button (hold)
+    canvas->fillRoundRect(lx, by, lw, bh, 6, C565(40, 40, 80));
+    canvas->drawRoundRect(lx, by, lw, bh, 6, C565(140, 140, 220));
+    canvas->setTextSize(1);
+    canvas->setTextColor(C565(180, 180, 255));
+    printMC("HOLD MENU", lx + lw/2, by + bh/2);
+
+    // RETRY button (tap, flashes)
     if (flashOn) {
-        canvas->setTextSize(1);
-        canvas->setTextColor(TFT_YELLOW);
-        printMC("TAP OR CLAP TO RETRY", SCREEN_W/2, 175);
+        canvas->fillRoundRect(rx, by, rw, bh, 6, C565(40, 80, 40));
+        canvas->drawRoundRect(rx, by, rw, bh, 6, C565(140, 220, 140));
+        canvas->setTextColor(C565(180, 255, 180));
+    } else {
+        canvas->fillRoundRect(rx, by, rw, bh, 6, C565(25, 50, 25));
+        canvas->drawRoundRect(rx, by, rw, bh, 6, C565(80, 140, 80));
+        canvas->setTextColor(C565(120, 180, 120));
     }
+    printMC("TAP RETRY", rx + rw/2, by + bh/2);
 
     pushFrame();
 }
@@ -299,8 +393,9 @@ static void resetGame() {
         pipes[i].spawn(SCREEN_W + 60 + i * PIPE_SPACING);
 }
 
-static bool checkFlap() {
-    return touch_was_pressed() || mic_clap_ready();
+// Touch is handled with coordinates in loop(); mic needs no coordinates.
+static bool checkMicFlap() {
+    return mic_clap_ready();
 }
 
 static void updateGame() {
@@ -389,6 +484,11 @@ void setup() {
 
     Serial.println("[5] touch_init");
     touch_init();
+    cal_init();
+    if (!cal_is_valid()) {
+        Serial.println("[5] running first-time touch calibration");
+        cal_run(tft);
+    }
 
     Serial.println("[6] mic_init");
     mic_init();
@@ -405,40 +505,79 @@ void setup() {
 }
 
 void loop() {
-    static uint32_t lastMs = 0;
-    const  uint32_t FRAME_MS = 33;   // ~30 FPS
-
-    // Fast path: consume ISR touch flag at full CPU speed so flap latency is < 1 loop
-    // iteration rather than up to one full frame (33 ms).
-    if (state == STATE_PLAYING && checkFlap()) bird.flap();
+    static uint32_t lastMs     = 0;
+    static bool     s_pending  = false;
+    static int      s_pendX    = 0, s_pendY = 0;
+    static bool     s_tracking = false;    // hold-timer active
+    static uint32_t s_trackFrom = 0;
+    const  uint32_t FRAME_MS   = 33;
 
     uint32_t now = millis();
+
+    // ── STATE_DEAD: hold-time routing ─────────────────────────────────────────
+    // FALLING ISR (reliable) arms the timer; TD_STATUS I2C poll detects lift.
+    // No G_MODE switching — works regardless of whether polling mode is supported.
+    if (state == STATE_DEAD && now - deadSince > 800) {
+        if (!s_tracking && touch_was_pressed()) {
+            s_tracking  = true;
+            s_trackFrom = now;
+        }
+        if (s_tracking) {
+            uint32_t elapsed = now - s_trackFrom;
+            if (elapsed >= 600) {
+                s_tracking = false;
+                state = STATE_MENU;
+            } else if (!touch_finger_down() && elapsed >= 30) {
+                s_tracking = false;
+                resetGame(); state = STATE_PLAYING;
+            }
+        }
+        if (checkMicFlap()) { s_tracking = false; resetGame(); state = STATE_PLAYING; }
+    } else if (state != STATE_DEAD) {
+        s_tracking = false;
+    }
+
+    // ── Trigger-mode ISR touch (all states except STATE_DEAD) ─────────────────
+    if (state != STATE_DEAD && !s_pending) {
+        s_pending = touch_get_pressed(s_pendX, s_pendY);
+    }
+
+    // ── Fast path: flap at full CPU speed for STATE_PLAYING ───────────────────
+    if (state == STATE_PLAYING) {
+        if (s_pending)       { bird.flap(); s_pending = false; }
+        if (checkMicFlap())  { bird.flap(); }
+    }
+
+    // ── Frame gate ────────────────────────────────────────────────────────────
     if (now - lastMs < FRAME_MS) return;
     lastMs = now;
 
     if (now - flashTimer >= 550) { flashOn = !flashOn; flashTimer = now; }
 
+    bool touched = s_pending;
+    int  tx = s_pendX, ty = s_pendY;
+    s_pending = false;
+
+    bool micReady = (state == STATE_SPLASH) && checkMicFlap();
+
     switch (state) {
+    case STATE_MENU:
+        drawMenu();
+        if (touched) handleMenuTouch(tx, ty);
+        break;
+
     case STATE_SPLASH:
         drawSplash();
-        if (checkFlap()) { resetGame(); state = STATE_PLAYING; }
+        if (touched || micReady) { resetGame(); state = STATE_PLAYING; }
         break;
 
     case STATE_PLAYING:
-        // Flap already handled above; just simulate + render this frame.
         updateGame();
         renderGame();
         break;
 
     case STATE_DEAD:
         drawDead();
-        // Evaluate checkFlap() unconditionally so the ISR flag is consumed even
-        // during the 800 ms cooldown, letting the very first tap after cooldown
-        // expires register immediately.
-        {
-            bool tapped = checkFlap();
-            if (now - deadSince > 800 && tapped) { resetGame(); state = STATE_PLAYING; }
-        }
         break;
     }
 }
