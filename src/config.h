@@ -47,16 +47,22 @@
 #define PIPE_SPACING 175
 
 // ── Physics ───────────────────────────────────────────────────────────────────
-#define GRAVITY          0.35f
-#define FLAP_VEL        -7.5f
+#define GRAVITY          0.6f
+#define FLAP_VEL        -5.5f
 #define MAX_FALL_VEL    10.0f
 #define INITIAL_SPEED    2.0f
-#define SPEED_INC        0.4f
-#define SPEED_STEP        10
+#define SPEED_INC        0.6f
+#define SPEED_STEP        20
 
 // ── Microphone clap detection ─────────────────────────────────────────────────
-#define MIC_THRESHOLD   6000
-#define MIC_COOLDOWN_MS  300
+// I2S MEMS mic: 24-bit left-justified in a 32-bit word.
+// After the >>8 shift in mic_task the peak range is ±2²³ (≈ ±8 000 000).
+//   6 000  → 0.07 % of full scale → triggers on room conversation / noise
+//   100 000 → ~1 %  → triggers on sharp sounds near the board (tap, clap)
+//   400 000 → ~5 %  → triggers only on loud, close claps
+// Increase if the bird flaps by itself; decrease if claps are not detected.
+#define MIC_THRESHOLD   400000
+#define MIC_COOLDOWN_MS    300
 
 // ── Compile-time RGB565 colour helper ─────────────────────────────────────────
 #define C565(r,g,b) ((uint16_t)(((uint16_t)((r)&0xF8u)<<8) | \

@@ -408,6 +408,10 @@ void loop() {
     static uint32_t lastMs = 0;
     const  uint32_t FRAME_MS = 33;   // ~30 FPS
 
+    // Fast path: consume ISR touch flag at full CPU speed so flap latency is < 1 loop
+    // iteration rather than up to one full frame (33 ms).
+    if (state == STATE_PLAYING && checkFlap()) bird.flap();
+
     uint32_t now = millis();
     if (now - lastMs < FRAME_MS) return;
     lastMs = now;
@@ -421,14 +425,20 @@ void loop() {
         break;
 
     case STATE_PLAYING:
-        if (checkFlap()) bird.flap();
+        // Flap already handled above; just simulate + render this frame.
         updateGame();
         renderGame();
         break;
 
     case STATE_DEAD:
         drawDead();
-        if (now - deadSince > 800 && checkFlap()) { resetGame(); state = STATE_PLAYING; }
+        // Evaluate checkFlap() unconditionally so the ISR flag is consumed even
+        // during the 800 ms cooldown, letting the very first tap after cooldown
+        // expires register immediately.
+        {
+            bool tapped = checkFlap();
+            if (now - deadSince > 800 && tapped) { resetGame(); state = STATE_PLAYING; }
+        }
         break;
     }
 }

@@ -1,26 +1,32 @@
 #include "touch.h"
 #include "config.h"
 #include <Wire.h>
+#include <Arduino.h>
 
-// FT6336G I2C registers
-static constexpr uint8_t FT_REG_TD_STATUS = 0x02;
-static constexpr uint8_t FT_EVT_PRESS     = 0x00;  // event flag in high nibble
+// FT6336G registers
+static constexpr uint8_t FT_REG_G_MODE = 0xA4;
+//   0x00 = polling  : INT stays LOW while finger is present
+//   0x01 = trigger  : INT pulses once on every new finger-down event  ← we use this
 
-static bool     s_prevTouching = false;
-static bool     s_pressed      = false;
+// ── ISR ───────────────────────────────────────────────────────────────────────
+// Runs in < 1 µs; just sets a flag.  No I2C inside the ISR.
+static volatile bool s_touchPending = false;
+
+void IRAM_ATTR touch_isr() {
+    s_touchPending = true;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-static uint8_t ft_read_byte(uint8_t reg) {
+static void ft_write_byte(uint8_t reg, uint8_t val) {
     Wire.beginTransmission(TOUCH_I2C_ADDR);
     Wire.write(reg);
-    Wire.endTransmission(false);
-    Wire.requestFrom((uint8_t)TOUCH_I2C_ADDR, (uint8_t)1);
-    return Wire.available() ? Wire.read() : 0;
+    Wire.write(val);
+    Wire.endTransmission(true);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 void touch_init() {
-    // Deassert reset
+    // Hardware reset
     pinMode(PIN_TOUCH_RST, OUTPUT);
     digitalWrite(PIN_TOUCH_RST, LOW);
     delay(10);
@@ -29,31 +35,16 @@ void touch_init() {
 
     Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, 400000UL);
 
-    // INT pin as input (we poll instead of using interrupts)
-    pinMode(PIN_TOUCH_INT, INPUT);
+    // Trigger mode: INT fires once per new finger-down event.
+    // The ISR captures it immediately regardless of the game-loop frame rate.
+    ft_write_byte(FT_REG_G_MODE, 0x01);
+
+    pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(PIN_TOUCH_INT), touch_isr, FALLING);
 }
 
 bool touch_was_pressed() {
-    // Read number of touch points
-    uint8_t td = ft_read_byte(FT_REG_TD_STATUS) & 0x0F;
-    bool touching = (td > 0);
-
-    // Rising edge detection
-    bool event = touching && !s_prevTouching;
-    s_prevTouching = touching;
-
-    if (event) {
-        // Verify the event flag is "press down" (optional sanity check)
-        // Register 0x03 holds event[7:6] and X high for touch point 0.
-        uint8_t evt = (ft_read_byte(0x03) >> 6) & 0x03;
-        if (evt == FT_EVT_PRESS) {
-            s_pressed = true;
-        }
-    }
-
-    if (s_pressed) {
-        s_pressed = false;
-        return true;
-    }
-    return false;
+    if (!s_touchPending) return false;
+    s_touchPending = false;   // consume — next call returns false until next tap
+    return true;
 }
