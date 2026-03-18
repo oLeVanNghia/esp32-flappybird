@@ -262,14 +262,6 @@ static void drawMenu() {
         printMC(GAMES[i].hint, SCREEN_W / 2, by + 38);
     }
 
-    // Calibrate button — bottom-right corner
-    canvas->fillRoundRect(SCREEN_W - 82, SCREEN_H - 26, 76, 20, 4, C565(30, 30, 30));
-    canvas->drawRoundRect(SCREEN_W - 82, SCREEN_H - 26, 76, 20, 4, C565(100, 100, 100));
-    canvas->setFont(nullptr);
-    canvas->setTextSize(1);
-    canvas->setTextColor(C565(140, 140, 140));
-    printMC("Calibrate Touch", SCREEN_W - 82 + 38, SCREEN_H - 26 + 10);
-
     pushFrame();
 }
 
@@ -284,11 +276,6 @@ static void handleMenuTouch(int tx, int ty) {
             state = STATE_SPLASH;
             return;
         }
-    }
-    // Calibrate button
-    if (tx >= SCREEN_W - 82 && ty >= SCREEN_H - 26) {
-        cal_run(tft);
-        state = STATE_MENU;   // redraw menu after calibration
     }
 }
 
