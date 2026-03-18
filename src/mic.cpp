@@ -1,15 +1,12 @@
 #include "mic.h"
 #include "config.h"
 #include <Arduino.h>
-#include <esp_idf_version.h>
 
-// ── IDF-version-conditional I2S API ──────────────────────────────────────────
-// IDF ≥ 5.0 (Arduino 3.x) removed the legacy driver/i2s.h API and requires
-// driver/i2s_std.h.  IDF < 5.0 (Arduino 2.x) only has the legacy API.
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-#  define USE_NEW_I2S_API 1
+// USE_NEW_I2S_API is defined in config.h based on ESP-IDF version.
+#ifdef USE_NEW_I2S_API
 #  include <driver/i2s_std.h>
-   static i2s_chan_handle_t s_rx_chan = nullptr;
+static i2s_chan_handle_t s_rx_chan = nullptr;
+static i2s_chan_handle_t s_tx_chan = nullptr;   // full-duplex TX — enabled by sound_init()
 #else
 #  include <driver/i2s.h>
 #endif
@@ -56,15 +53,17 @@ void mic_init() {
     esp_err_t err;
 
 #ifdef USE_NEW_I2S_API
-    // ── IDF 5.x new-style I2S ──────────────────────────────────────────────
+    // ── IDF 5.x new-style I2S (full-duplex) ──────────────────────────────────
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    err = i2s_new_channel(&chan_cfg, nullptr, &s_rx_chan);
+    // Allocate both TX and RX handles in one call — the only i2s_new_channel() call.
+    err = i2s_new_channel(&chan_cfg, &s_tx_chan, &s_rx_chan);
     if (err != ESP_OK) {
         Serial.printf("[mic] i2s_new_channel failed: %s\n", esp_err_to_name(err));
         return;
     }
 
-    i2s_std_config_t std_cfg = {
+    // ── RX channel (microphone) ───────────────────────────────────────────────
+    i2s_std_config_t rx_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(16000),
         .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(
                         I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
@@ -74,30 +73,56 @@ void mic_init() {
             .ws   = (gpio_num_t)PIN_I2S_WS,
             .dout = I2S_GPIO_UNUSED,
             .din  = (gpio_num_t)PIN_I2S_DATA,
-            .invert_flags = { false, false, false },
+            .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false },
         },
     };
 
-    err = i2s_channel_init_std_mode(s_rx_chan, &std_cfg);
+    err = i2s_channel_init_std_mode(s_rx_chan, &rx_cfg);
     if (err != ESP_OK) {
-        Serial.printf("[mic] i2s_channel_init_std_mode failed: %s\n", esp_err_to_name(err));
-        i2s_del_channel(s_rx_chan);
-        s_rx_chan = nullptr;
+        Serial.printf("[mic] RX init failed: %s\n", esp_err_to_name(err));
+        i2s_del_channel(s_rx_chan); s_rx_chan = nullptr;
+        i2s_del_channel(s_tx_chan); s_tx_chan = nullptr;
         return;
     }
 
     err = i2s_channel_enable(s_rx_chan);
     if (err != ESP_OK) {
-        Serial.printf("[mic] i2s_channel_enable failed: %s\n", esp_err_to_name(err));
-        i2s_del_channel(s_rx_chan);
-        s_rx_chan = nullptr;
+        Serial.printf("[mic] RX enable failed: %s\n", esp_err_to_name(err));
+        i2s_del_channel(s_rx_chan); s_rx_chan = nullptr;
+        i2s_del_channel(s_tx_chan); s_tx_chan = nullptr;
         return;
     }
 
+    // ── TX channel (speaker) — init but do NOT enable yet ────────────────────
+    // sound_init() calls mic_enable_tx_chan() when the sound task is ready,
+    // preventing DMA noise before any audio data is written.
+    i2s_std_config_t tx_cfg = {
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(16000),
+        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(
+                        I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = (gpio_num_t)PIN_I2S_MCLK,
+            .bclk = (gpio_num_t)PIN_I2S_BCLK,
+            .ws   = (gpio_num_t)PIN_I2S_WS,
+            .dout = (gpio_num_t)PIN_I2S_DOUT,
+            .din  = I2S_GPIO_UNUSED,
+            .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false },
+        },
+    };
+
+    err = i2s_channel_init_std_mode(s_tx_chan, &tx_cfg);
+    if (err != ESP_OK) {
+        Serial.printf("[mic] TX init failed: %s\n", esp_err_to_name(err));
+        // RX is still running; only discard the TX handle
+        i2s_del_channel(s_tx_chan);
+        s_tx_chan = nullptr;
+        // Continue — mic still works without sound output
+    }
+
 #else
-    // ── IDF 4.x legacy I2S ────────────────────────────────────────────────
+    // ── IDF 4.x legacy I2S (full-duplex) ────────────────────────────────────
     const i2s_config_t i2s_cfg = {
-        .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+        .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_TX),
         .sample_rate          = 16000,
         .bits_per_sample      = I2S_BITS_PER_SAMPLE_32BIT,
         .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,
@@ -106,7 +131,7 @@ void mic_init() {
         .dma_buf_count        = 4,
         .dma_buf_len          = 64,
         .use_apll             = false,
-        .tx_desc_auto_clear   = false,
+        .tx_desc_auto_clear   = true,   // silence TX DMA when not writing
         .fixed_mclk           = 0,
         .mclk_multiple        = I2S_MCLK_MULTIPLE_DEFAULT,
         .bits_per_chan         = I2S_BITS_PER_CHAN_DEFAULT,
@@ -115,7 +140,7 @@ void mic_init() {
         .mck_io_num   = PIN_I2S_MCLK,
         .bck_io_num   = PIN_I2S_BCLK,
         .ws_io_num    = PIN_I2S_WS,
-        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_out_num = PIN_I2S_DOUT,
         .data_in_num  = PIN_I2S_DATA,
     };
 
@@ -145,3 +170,10 @@ bool mic_clap_ready() {
     }
     return false;
 }
+
+#ifdef USE_NEW_I2S_API
+i2s_chan_handle_t mic_get_tx_chan()  { return s_tx_chan; }
+void mic_enable_tx_chan() {
+    if (s_tx_chan) i2s_channel_enable(s_tx_chan);
+}
+#endif
