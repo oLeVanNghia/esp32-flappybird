@@ -15,6 +15,7 @@
 #include "touch.h"
 #include "mic.h"
 #include "cal.h"
+#include "sound.h"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -278,6 +279,7 @@ static void handleMenuTouch(int tx, int ty) {
         const int bx = 20, bw = SCREEN_W - 40, bh = 54;
         const int by = 72 + i * (bh + 10);
         if (tx >= bx && tx < bx + bw && ty >= by && ty < by + bh) {
+            sound_menu_tap();
             resetGame();
             state = STATE_SPLASH;
             return;
@@ -416,6 +418,7 @@ static void updateGame() {
         if (!pipes[i].passed && pipes[i].x + PIPE_W < BIRD_X) {
             pipes[i].passed = true;
             score++;
+            sound_score();
             if (score % SPEED_STEP == 0) pipeSpeed += SPEED_INC;
         }
     }
@@ -423,11 +426,13 @@ static void updateGame() {
     for (int i = 0; i < PIPE_COUNT; i++) {
         if (pipes[i].hitsBird(bird.y)) {
             if (score > hiScore) { hiScore = score; saveHiScore(); }
+            sound_die(); sound_music_stop();
             deadSince = millis(); state = STATE_DEAD; return;
         }
     }
     if (bird.outOfBounds()) {
         if (score > hiScore) { hiScore = score; saveHiScore(); }
+        sound_die(); sound_music_stop();
         deadSince = millis(); state = STATE_DEAD;
     }
 }
@@ -493,12 +498,15 @@ void setup() {
     Serial.println("[6] mic_init");
     mic_init();
 
-    Serial.println("[7] preferences");
+    Serial.println("[7] sound_init");
+    sound_init();
+
+    Serial.println("[8] preferences");
     prefs.begin("flappy", true);
     hiScore = prefs.getInt("hi", 0);
     prefs.end();
 
-    Serial.println("[8] resetGame");
+    Serial.println("[9] resetGame");
     resetGame();
     flashTimer = millis();
     Serial.println("[OK] setup complete");
@@ -529,10 +537,10 @@ void loop() {
                 state = STATE_MENU;
             } else if (!touch_finger_down() && elapsed >= 30) {
                 s_tracking = false;
-                resetGame(); state = STATE_PLAYING;
+                resetGame(); state = STATE_PLAYING; sound_music_start();
             }
         }
-        if (checkMicFlap()) { s_tracking = false; resetGame(); state = STATE_PLAYING; }
+        if (checkMicFlap()) { s_tracking = false; resetGame(); state = STATE_PLAYING; sound_music_start(); }
     } else if (state != STATE_DEAD) {
         s_tracking = false;
     }
@@ -544,8 +552,8 @@ void loop() {
 
     // ── Fast path: flap at full CPU speed for STATE_PLAYING ───────────────────
     if (state == STATE_PLAYING) {
-        if (s_pending)       { bird.flap(); s_pending = false; }
-        if (checkMicFlap())  { bird.flap(); }
+        if (s_pending)       { bird.flap(); sound_flap(); s_pending = false; }
+        if (checkMicFlap())  { bird.flap(); sound_flap(); }
     }
 
     // ── Frame gate ────────────────────────────────────────────────────────────
@@ -568,7 +576,7 @@ void loop() {
 
     case STATE_SPLASH:
         drawSplash();
-        if (touched || micReady) { resetGame(); state = STATE_PLAYING; }
+        if (touched || micReady) { resetGame(); state = STATE_PLAYING; sound_music_start(); }
         break;
 
     case STATE_PLAYING:
