@@ -16,10 +16,15 @@
 #include "mic.h"
 #include "cal.h"
 #include "sound.h"
+#include "catch.h"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-enum GameState : uint8_t { STATE_MENU, STATE_SPLASH, STATE_PLAYING, STATE_DEAD };
+enum GameState : uint8_t {
+    STATE_MENU,
+    STATE_SPLASH, STATE_PLAYING, STATE_DEAD,          // Flabby Bird
+    STATE_CT_PLAYING, STATE_CT_DEAD                   // Catch!
+};
 
 struct Bird {
     float y   = SCREEN_H / 2.0f;
@@ -91,10 +96,14 @@ static void resetGame();
 
 // ── Game registry ─────────────────────────────────────────────────────────────
 
-struct GameEntry { const char* name; const char* hint; uint16_t color; };
+struct GameEntry { const char* name; const char* hint; uint16_t color; void (*launch)(); };
+
+static void launch_flabby() { resetGame(); state = STATE_SPLASH; }
+static void launch_catch()  { catch_reset(); state = STATE_CT_PLAYING; }
 
 static const GameEntry GAMES[] = {
-    { "Flabby Bird", "Tap or clap to flap!", C565(250, 220, 0) },
+    { "Flabby Bird", "Tap or clap to flap!",      C565(250, 220,   0), launch_flabby },
+    { "Catch!",      "Tap to move the basket",    C565( 80, 200, 255), launch_catch  },
 };
 static constexpr int GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
@@ -272,8 +281,7 @@ static void handleMenuTouch(int tx, int ty) {
         const int by = 72 + i * (bh + 10);
         if (tx >= bx && tx < bx + bw && ty >= by && ty < by + bh) {
             sound_menu_tap();
-            resetGame();
-            state = STATE_SPLASH;
+            GAMES[i].launch();
             return;
         }
     }
@@ -509,10 +517,10 @@ void loop() {
 
     uint32_t now = millis();
 
-    // ── STATE_DEAD: hold-time routing ─────────────────────────────────────────
-    // FALLING ISR (reliable) arms the timer; TD_STATUS I2C poll detects lift.
-    // No G_MODE switching — works regardless of whether polling mode is supported.
-    if (state == STATE_DEAD && now - deadSince > 800) {
+    // ── Dead-state hold-time routing (Flabby Bird + Catch!) ──────────────────
+    // FALLING ISR arms the timer; TD_STATUS I2C poll detects lift.
+    bool isDeadState = (state == STATE_DEAD || state == STATE_CT_DEAD);
+    if (isDeadState && now - deadSince > 800) {
         if (!s_tracking && touch_was_pressed()) {
             s_tracking  = true;
             s_trackFrom = now;
@@ -524,23 +532,30 @@ void loop() {
                 state = STATE_MENU;
             } else if (!touch_finger_down() && elapsed >= 30) {
                 s_tracking = false;
-                resetGame(); state = STATE_PLAYING; sound_music_start();
+                if (state == STATE_CT_DEAD) { catch_reset(); state = STATE_CT_PLAYING; }
+                else                        { resetGame(); state = STATE_PLAYING; sound_music_start(); }
             }
         }
-        if (checkMicFlap()) { s_tracking = false; resetGame(); state = STATE_PLAYING; sound_music_start(); }
-    } else if (state != STATE_DEAD) {
+        if (state == STATE_DEAD && checkMicFlap()) {
+            s_tracking = false; resetGame(); state = STATE_PLAYING; sound_music_start();
+        }
+    } else if (!isDeadState) {
         s_tracking = false;
     }
 
-    // ── Trigger-mode ISR touch (all states except STATE_DEAD) ─────────────────
-    if (state != STATE_DEAD && !s_pending) {
+    // ── Trigger-mode ISR touch (all states except dead states) ────────────────
+    if (!isDeadState && !s_pending) {
         s_pending = touch_get_pressed(s_pendX, s_pendY);
     }
 
-    // ── Fast path: flap at full CPU speed for STATE_PLAYING ───────────────────
+    // ── Fast path: flap / basket at full CPU speed ────────────────────────────
     if (state == STATE_PLAYING) {
         if (s_pending)       { bird.flap(); sound_flap(); s_pending = false; }
         if (checkMicFlap())  { bird.flap(); sound_flap(); }
+    }
+    if (state == STATE_CT_PLAYING && s_pending) {
+        catch_set_basket(s_pendX);
+        s_pending = false;
     }
 
     // ── Frame gate ────────────────────────────────────────────────────────────
@@ -573,6 +588,16 @@ void loop() {
 
     case STATE_DEAD:
         drawDead();
+        break;
+
+    case STATE_CT_PLAYING:
+        if (catch_update()) { deadSince = millis(); state = STATE_CT_DEAD; }
+        else                { catch_render(canvas); pushFrame(); }
+        break;
+
+    case STATE_CT_DEAD:
+        catch_draw_gameover(canvas, flashOn);
+        pushFrame();
         break;
     }
 }
