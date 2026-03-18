@@ -1,5 +1,11 @@
 #pragma once
 #include <cstdint>
+#include <esp_idf_version.h>
+
+// IDF ≥ 5.0 uses driver/i2s_std.h (new API); IDF < 5.0 uses legacy driver/i2s.h
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#  define USE_NEW_I2S_API 1
+#endif
 
 // ── Pin definitions ───────────────────────────────────────────────────────────
 // Source: https://www.lcdwiki.com/2.8inch_ESP32-S3_Display
@@ -27,7 +33,9 @@
 #define PIN_I2S_MCLK     4
 #define PIN_I2S_BCLK     5
 #define PIN_I2S_WS       7
-#define PIN_I2S_DATA     8   // IO8, not IO6
+#define PIN_I2S_DATA     8   // IO8, not IO6 — microphone data in
+#define PIN_I2S_DOUT     6   // IO6 — speaker data out (onboard amp)
+#define PIN_I2S_AMP_EN   1   // IO1 — amplifier enable, active LOW
 
 // ── Display ───────────────────────────────────────────────────────────────────
 #define SCREEN_W   320
