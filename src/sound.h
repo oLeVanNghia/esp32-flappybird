@@ -11,5 +11,6 @@ void sound_die();        // 220→110 Hz / 300 ms — descending sweep
 void sound_menu_tap();   // 660 Hz / 40 ms  — UI click
 
 // Background music control.
-void sound_music_start(); // begin looping melody (call on STATE_PLAYING entry)
-void sound_music_stop();  // stop melody (call on STATE_DEAD transition)
+void sound_music_start(); // begin looping Flabby Bird melody
+void sound_catch_start(); // begin looping Catch! melody
+void sound_music_stop();  // stop any background melody

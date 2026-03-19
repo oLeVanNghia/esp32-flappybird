@@ -99,7 +99,7 @@ static void resetGame();
 struct GameEntry { const char* name; const char* hint; uint16_t color; void (*launch)(); };
 
 static void launch_flabby() { resetGame(); state = STATE_SPLASH; }
-static void launch_catch()  { catch_reset(); state = STATE_CT_PLAYING; }
+static void launch_catch()  { catch_reset(); state = STATE_CT_PLAYING; sound_catch_start(); }
 
 static const GameEntry GAMES[] = {
     { "Flabby Bird", "Tap or clap to flap!",      C565(250, 220,   0), launch_flabby },
@@ -591,7 +591,7 @@ void loop() {
         break;
 
     case STATE_CT_PLAYING:
-        if (catch_update()) { deadSince = millis(); state = STATE_CT_DEAD; }
+        if (catch_update()) { sound_music_stop(); deadSince = millis(); state = STATE_CT_DEAD; }
         else                { catch_render(canvas); pushFrame(); }
         break;
 

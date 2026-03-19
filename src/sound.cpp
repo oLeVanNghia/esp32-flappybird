@@ -12,12 +12,13 @@
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 enum SoundEvent : uint8_t {
-    SND_FLAP       = 0,
-    SND_SCORE      = 1,
-    SND_DIE        = 2,
-    SND_MENU_TAP   = 3,
+    SND_FLAP        = 0,
+    SND_SCORE       = 1,
+    SND_DIE         = 2,
+    SND_MENU_TAP    = 3,
     SND_MUSIC_START = 4,
     SND_MUSIC_STOP  = 5,
+    SND_CATCH_START = 6,
 };
 
 struct EffectDef { uint16_t freq_hz; uint16_t dur_ms; };
@@ -25,12 +26,14 @@ struct EffectDef { uint16_t freq_hz; uint16_t dur_ms; };
 struct Note { uint16_t freq_hz; uint16_t dur_ms; };
 
 struct MusicState {
-    bool    on            = false;
-    int     note_idx      = 0;
-    int     samples_rem   = 0;
-    float   half_period_f = 0.f;  // 16000/(2*freq); 0.f when freq==0 (rest)
-    int     hp_counter    = 0;    // samples into current half-period
-    int32_t sign          = 1;    // square-wave polarity
+    bool          on            = false;
+    const Note*   melody        = nullptr;
+    int           melody_len    = 0;
+    int           note_idx      = 0;
+    int           samples_rem   = 0;
+    float         half_period_f = 0.f;  // 16000/(2*freq); 0.f when freq==0 (rest)
+    int           hp_counter    = 0;    // samples into current half-period
+    int32_t       sign          = 1;    // square-wave polarity
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -60,6 +63,17 @@ static const Note MELODY[] = {
 };
 static constexpr int MELODY_LEN = (int)(sizeof(MELODY) / sizeof(MELODY[0]));
 
+// G major upbeat loop for Catch!, ~2 s.
+static const Note CATCH_MELODY[] = {
+    { 784,  80}, { 880,  80}, { 988,  80}, {1047,  80},  // G5 A5 B5 C6
+    { 988,  80}, { 880,  80}, { 784, 160}, {   0,  40},  // B5 A5 G5 rest
+    { 659,  80}, { 784,  80}, { 880,  80}, { 784,  80},  // E5 G5 A5 G5
+    { 659,  80}, { 587,  80}, { 659, 160}, {   0,  40},  // E5 D5 E5 rest
+    { 784,  80}, { 784,  80}, { 880,  80}, { 988,  80},  // G5 G5 A5 B5
+    {1047, 240}, {   0,  40},                            // C6 rest
+};
+static constexpr int CATCH_MELODY_LEN = (int)(sizeof(CATCH_MELODY) / sizeof(CATCH_MELODY[0]));
+
 // ── Module state ──────────────────────────────────────────────────────────────
 
 static QueueHandle_t s_queue   = nullptr;
@@ -81,7 +95,7 @@ static void i2s_write_buf(int samples) {
 // ── Note loading ──────────────────────────────────────────────────────────────
 
 static void load_note(MusicState& m) {
-    const Note& n = MELODY[m.note_idx];
+    const Note& n = m.melody[m.note_idx];
     m.samples_rem   = ((int)n.dur_ms * SAMPLE_RATE) / 1000;
     m.half_period_f = (n.freq_hz == 0) ? 0.f
                                        : (float)SAMPLE_RATE / (2.f * n.freq_hz);
@@ -133,7 +147,7 @@ static void play_effect(SoundEvent evt) {
 static void fill_music_chunk(MusicState& m) {
     for (int i = 0; i < CHUNK; i++) {
         if (m.samples_rem <= 0) {
-            m.note_idx = (m.note_idx + 1) % MELODY_LEN;
+            m.note_idx = (m.note_idx + 1) % m.melody_len;
             load_note(m);
         }
         if (m.half_period_f == 0.f) {
@@ -167,7 +181,15 @@ static void sound_task(void* /*param*/) {
                     memset(s_buf, 0, sizeof(s_buf));
                     i2s_write_buf(CHUNK);       // flush DMA with silence
                 } else if (evt == SND_MUSIC_START) {
-                    // Already on — ignore
+                    music.melody     = MELODY;
+                    music.melody_len = MELODY_LEN;
+                    music.note_idx   = 0;
+                    load_note(music);
+                } else if (evt == SND_CATCH_START) {
+                    music.melody     = CATCH_MELODY;
+                    music.melody_len = CATCH_MELODY_LEN;
+                    music.note_idx   = 0;
+                    load_note(music);
                 } else {
                     play_effect(evt);           // MusicState preserved; resumes after
                     // Known: minor phase click at resume point (DMA state not preserved)
@@ -178,7 +200,15 @@ static void sound_task(void* /*param*/) {
             if (xQueueReceive(s_queue, &evt, portMAX_DELAY) != pdTRUE) continue;
 
             if (evt == SND_MUSIC_START) {
-                music.note_idx = 0;
+                music.melody     = MELODY;
+                music.melody_len = MELODY_LEN;
+                music.note_idx   = 0;
+                load_note(music);
+                music.on = true;
+            } else if (evt == SND_CATCH_START) {
+                music.melody     = CATCH_MELODY;
+                music.melody_len = CATCH_MELODY_LEN;
+                music.note_idx   = 0;
                 load_note(music);
                 music.on = true;
             } else if (evt == SND_MUSIC_STOP) {
@@ -225,4 +255,5 @@ void sound_score()       { post(SND_SCORE); }
 void sound_die()         { post(SND_DIE); }
 void sound_menu_tap()    { post(SND_MENU_TAP); }
 void sound_music_start() { post(SND_MUSIC_START); }
+void sound_catch_start() { post(SND_CATCH_START); }
 void sound_music_stop()  { post(SND_MUSIC_STOP); }
